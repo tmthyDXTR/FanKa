@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <!-- node-host is a separate Node.js app nested in this folder; keep its files (incl. node_modules) out of this build -->
+  <ItemGroup>
+    <Content Remove="node-host/**" />
+    <None Remove="node-host/**" />
+  </ItemGroup>
+</Project>

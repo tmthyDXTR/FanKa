@@ -1,0 +1,28 @@
+{
+  "name": "flashcards-wasm-host",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Node.js host for the flashcards WASM app: serves the published static client and the login/decks/TTS API, for hosts that only support Node.js (e.g. FastComet shared hosting).",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "DEV_LIVE=1 node server.js",
+    "sync-wasm": "node scripts/sync-wasm.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^13.0.3",
+    "cookie-parser": "^1.4.6",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.4.0",
+    "jsonwebtoken": "^9.0.2",
+    "mime-types": "^2.1.35"
+  },
+  "allowScripts": {
+    "better-sqlite3@13.0.3": true
+  }
+}
