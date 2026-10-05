@@ -43,11 +43,12 @@ router.delete('/:id', (req, res) => {
 router.get('/:id/settings', (req, res) => {
   const deckId = Number(req.params.id);
   const deck = db
-    .prepare('SELECT hard_delay_minutes, easy_delay_minutes, done_delay_minutes FROM decks WHERE id = ? AND owner_id = ?')
+    .prepare('SELECT wrong_delay_minutes, hard_delay_minutes, easy_delay_minutes, done_delay_minutes FROM decks WHERE id = ? AND owner_id = ?')
     .get(deckId, req.user.sub);
   if (!deck) return res.status(404).end();
 
   res.json({
+    wrongDelayMinutes: deck.wrong_delay_minutes,
     hardDelayMinutes: deck.hard_delay_minutes,
     easyDelayMinutes: deck.easy_delay_minutes,
     doneDelayMinutes: deck.done_delay_minutes,
@@ -58,13 +59,14 @@ router.put('/:id/settings', (req, res) => {
   const deckId = Number(req.params.id);
   if (!ownsDeck(deckId, req.user.sub)) return res.status(404).end();
 
+  const wrong = Math.max(0, Number(req.body?.wrongDelayMinutes) || 0);
   const hard = Math.max(0, Number(req.body?.hardDelayMinutes) || 0);
   const easy = Math.max(0, Number(req.body?.easyDelayMinutes) || 0);
   const done = Math.max(0, Number(req.body?.doneDelayMinutes) || 0);
   db.prepare(
-    'UPDATE decks SET hard_delay_minutes = ?, easy_delay_minutes = ?, done_delay_minutes = ? WHERE id = ?'
-  ).run(hard, easy, done, deckId);
-  res.json({ hardDelayMinutes: hard, easyDelayMinutes: easy, doneDelayMinutes: done });
+    'UPDATE decks SET wrong_delay_minutes = ?, hard_delay_minutes = ?, easy_delay_minutes = ?, done_delay_minutes = ? WHERE id = ?'
+  ).run(wrong, hard, easy, done, deckId);
+  res.json({ wrongDelayMinutes: wrong, hardDelayMinutes: hard, easyDelayMinutes: easy, doneDelayMinutes: done });
 });
 
 router.get('/:id/cards', (req, res) => {

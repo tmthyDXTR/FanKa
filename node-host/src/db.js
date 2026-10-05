@@ -29,6 +29,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    wrong_delay_minutes INTEGER NOT NULL DEFAULT 2,
     hard_delay_minutes INTEGER NOT NULL DEFAULT 2,
     easy_delay_minutes INTEGER NOT NULL DEFAULT 10,
     done_delay_minutes INTEGER NOT NULL DEFAULT 1440
@@ -45,5 +46,10 @@ db.exec(`
     ready_at TEXT
   );
 `);
+
+const deckColumns = db.pragma('table_info(decks)');
+if (!deckColumns.some((column) => column.name === 'wrong_delay_minutes')) {
+  db.exec('ALTER TABLE decks ADD COLUMN wrong_delay_minutes INTEGER NOT NULL DEFAULT 2');
+}
 
 module.exports = db;
