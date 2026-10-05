@@ -120,46 +120,32 @@ const EASY_TO_DONE = 3;
 // every 3rd turn so new vocabulary isn't crowded out by overdue Hard/Easy/Done reviews.
 let turnCounter = 0;
 
-// Hidden staging for "Wrong" cards: shown again immediately (ahead of everything else) so
-// the user gets a chance to answer correctly before it blends back into the Remaining pile.
-let retryQueue = [];
-
-function clearFromRetryQueue(index) {
-  retryQueue = retryQueue.filter((i) => i !== index);
-}
-
 // Adjustable per-deck delays (minutes) before a card returns to the Remaining pile
-let deckSettings = { hardDelayMinutes: 2, easyDelayMinutes: 10, doneDelayMinutes: 1440 };
+let deckSettings = { wrongDelayMinutes: 2, hardDelayMinutes: 2, easyDelayMinutes: 10, doneDelayMinutes: 1440 };
 
 function isReady(meta) {
   return !meta.readyAt || meta.readyAt.getTime() <= Date.now();
 }
 
-// Cards ready for review now. Retry-staged cards come first of all (hidden from the piles,
-// but prioritized), then expired-timer cards (most overdue first), then never-touched cards
+// Cards ready for review now. Expired-timer cards come first (most overdue first), then never-touched cards
 // last - otherwise a deck full of fresh cards would bury due Hard/Easy/Done cards forever.
 function getActiveQueueIndices() {
-  const validRetries = retryQueue.filter((i) => i < cardMeta.length);
-  const retrySet = new Set(validRetries);
-
   const normallyReady = cardMeta
     .map((_, i) => i)
-    .filter((i) => !retrySet.has(i) && isReady(cardMeta[i]))
+    .filter((i) => isReady(cardMeta[i]))
     .sort((a, b) => {
       const ra = cardMeta[a].readyAt ? cardMeta[a].readyAt.getTime() : Infinity;
       const rb = cardMeta[b].readyAt ? cardMeta[b].readyAt.getTime() : Infinity;
       return ra - rb;
     });
 
-  return [...validRetries, ...normallyReady];
+  return normallyReady;
 }
 
 // Picks the card to show next. Every 3rd turn, prefers an untouched/remaining card (if any)
-// over overdue Hard/Easy/Done reviews - but never overrides an urgent hidden retry card.
+// over overdue Hard/Easy/Done reviews.
 function pickCurrentCardIndex(queue) {
-  const hasRetryAtFront = retryQueue.includes(queue[0]);
-
-  if (!hasRetryAtFront && turnCounter % 3 === 2) {
+  if (turnCounter % 3 === 2) {
     const freshIndex = queue.find((i) => cardMeta[i].bucket === 'remaining');
     if (freshIndex !== undefined) return freshIndex;
   }
@@ -919,19 +905,15 @@ async function persistCardProgress(index) {
   });
 }
 
-// Wrong: resets this card's easy streak and stages it to be shown again immediately,
-// ahead of the normal Remaining rotation, giving the user a chance to get it right next
+// Wrong: resets this card's easy streak and returns it to Remaining after its review delay
 document.getElementById('btnWrong').addEventListener('click', () => {
   if (currentCardIndex === null) return;
   nudgeCard('right');
   const index = currentCardIndex;
-  clearFromRetryQueue(index);
-
   const meta = cardMeta[index];
   meta.bucket = 'remaining';
   meta.easyStreak = 0;
-  meta.readyAt = null;
-  retryQueue.push(index);
+  meta.readyAt = minutesFromNow(deckSettings.wrongDelayMinutes);
 
   persistCardProgress(index);
   turnCounter += 1;
@@ -944,8 +926,6 @@ document.getElementById('btnHard').addEventListener('click', () => {
   if (currentCardIndex === null) return;
   nudgeCard('down');
   const index = currentCardIndex;
-  clearFromRetryQueue(index);
-
   const meta = cardMeta[index];
   meta.easyStreak = Math.max(0, meta.easyStreak - 1);
   meta.bucket = 'hard';
@@ -962,8 +942,6 @@ document.getElementById('btnGood').addEventListener('click', () => {
   if (currentCardIndex === null) return;
   nudgeCard('up');
   const index = currentCardIndex;
-  clearFromRetryQueue(index);
-
   const meta = cardMeta[index];
   meta.easyStreak += 1;
 
@@ -1185,7 +1163,6 @@ async function loadDeckById(deckId) {
     easyStreak: c.easyStreak,
     readyAt: c.readyAt ? new Date(c.readyAt) : null
   }));
-  retryQueue = [];
   turnCounter = 0;
 
   currentDeckId = deckId;
@@ -1203,6 +1180,7 @@ async function loadDeckSettings(deckId) {
   if (!response.ok) return;
 
   deckSettings = await response.json();
+  document.getElementById('wrongDelayInput').value = deckSettings.wrongDelayMinutes;
   document.getElementById('hardDelayInput').value = deckSettings.hardDelayMinutes;
   document.getElementById('easyDelayInput').value = deckSettings.easyDelayMinutes;
   document.getElementById('doneDelayInput').value = deckSettings.doneDelayMinutes;
@@ -1310,9 +1288,9 @@ document.getElementById('btnCreateDeck').addEventListener('click', async () => {
   // Start the new deck empty rather than carrying over the current in-session cards
   exports.DeckEngine.ClearDeck();
   cardMeta = [];
-  retryQueue = [];
   turnCounter = 0;
-  deckSettings = { hardDelayMinutes: 2, easyDelayMinutes: 10, doneDelayMinutes: 1440 };
+  deckSettings = { wrongDelayMinutes: 2, hardDelayMinutes: 2, easyDelayMinutes: 10, doneDelayMinutes: 1440 };
+  document.getElementById('wrongDelayInput').value = deckSettings.wrongDelayMinutes;
   document.getElementById('hardDelayInput').value = deckSettings.hardDelayMinutes;
   document.getElementById('easyDelayInput').value = deckSettings.easyDelayMinutes;
   document.getElementById('doneDelayInput').value = deckSettings.doneDelayMinutes;
@@ -1330,13 +1308,14 @@ document.getElementById('btnSaveTimers').addEventListener('click', async () => {
     return;
   }
 
+  const wrongDelayMinutes = Math.max(0, parseInt(document.getElementById('wrongDelayInput').value, 10) || 0);
   const hardDelayMinutes = Math.max(0, parseInt(document.getElementById('hardDelayInput').value, 10) || 0);
   const easyDelayMinutes = Math.max(0, parseInt(document.getElementById('easyDelayInput').value, 10) || 0);
   const doneDelayMinutes = Math.max(0, parseInt(document.getElementById('doneDelayInput').value, 10) || 0);
 
   const response = await apiCall(`/api/decks/${currentDeckId}/settings`, {
     method: 'PUT',
-    body: JSON.stringify({ hardDelayMinutes, easyDelayMinutes, doneDelayMinutes })
+    body: JSON.stringify({ wrongDelayMinutes, hardDelayMinutes, easyDelayMinutes, doneDelayMinutes })
   });
 
   if (!response.ok) {
@@ -1384,9 +1363,9 @@ document.getElementById('btnDeleteDeck').addEventListener('click', async () => {
     localStorage.removeItem('lastDeckId');
     exports.DeckEngine.ClearDeck();
     cardMeta = [];
-    retryQueue = [];
     turnCounter = 0;
-    deckSettings = { hardDelayMinutes: 2, easyDelayMinutes: 10, doneDelayMinutes: 1440 };
+    deckSettings = { wrongDelayMinutes: 2, hardDelayMinutes: 2, easyDelayMinutes: 10, doneDelayMinutes: 1440 };
+    document.getElementById('wrongDelayInput').value = deckSettings.wrongDelayMinutes;
     document.getElementById('hardDelayInput').value = deckSettings.hardDelayMinutes;
     document.getElementById('easyDelayInput').value = deckSettings.easyDelayMinutes;
     document.getElementById('doneDelayInput').value = deckSettings.doneDelayMinutes;
