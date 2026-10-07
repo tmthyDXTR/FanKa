@@ -146,7 +146,7 @@
 
     .card-back { transform: rotateY(180deg); }
 
-    /* Small dots showing how close the current card is to graduating to the Done pile */
+    /* Small dots showing how far up the review interval ladder (1, 3, 7, 16, 35 days) the current card is */
     .card-progress-dots {
       position: absolute;
       bottom: 0.6rem;
@@ -697,7 +697,8 @@
       margin-top: 0.7rem;
     }
 
-    .deck-actions .deck-actions-body input[type="text"] { grid-column: 1 / -1; }
+    .deck-actions .deck-actions-body input[type="text"],
+    .deck-actions .deck-actions-body #btnDeleteDeck { grid-column: 1 / -1; }
 
     .deck-timers {
       display: flex;
@@ -808,7 +809,6 @@
           <details class="deck-actions">
             <summary>Deck actions</summary>
             <div class="deck-actions-body">
-              <button class="action-btn" id="btnLoadDeck" type="button">Load Deck</button>
               <button class="action-btn btn-wrong" id="btnDeleteDeck" type="button">Delete Deck</button>
 
               <input type="text" id="newDeckName" placeholder="New deck name" />
@@ -816,11 +816,10 @@
             </div>
 
             <div class="deck-timers">
-              <span class="deck-timers-title">Return to Remaining after:</span>
-              <label>Wrong <input type="number" id="wrongDelayInput" min="0" value="2" /> min</label>
-              <label>Hard <input type="number" id="hardDelayInput" min="0" value="2" /> min</label>
-              <label>Easy <input type="number" id="easyDelayInput" min="0" value="10" /> min</label>
-              <label>Done <input type="number" id="doneDelayInput" min="0" value="1440" /> min</label>
+              <span class="deck-timers-title">Learning-phase retry delays:</span>
+              <label>Wrong <input type="number" id="wrongDelayInput" min="0" value="1" /> min</label>
+              <label>Hard <input type="number" id="hardDelayInput" min="0" value="10" /> min</label>
+              <label>Lapse (Wrong in review) <input type="number" id="lapseDelayInput" min="0" value="10" /> min</label>
               <button class="action-btn btn-small" id="btnSaveTimers" type="button">Save Timers</button>
             </div>
 
@@ -948,6 +947,8 @@
                 <span class="dot"></span>
                 <span class="dot"></span>
                 <span class="dot"></span>
+                <span class="dot"></span>
+                <span class="dot"></span>
               </div>
             </div>
             <div class="card-face card-back">
@@ -955,6 +956,8 @@
               <div class="english" id="backEnglish">...</div>
               <button class="audio-btn" id="btnAudioBack">🔊 Listen</button>
               <div class="card-progress-dots" id="backProgressDots">
+                <span class="dot"></span>
+                <span class="dot"></span>
                 <span class="dot"></span>
                 <span class="dot"></span>
                 <span class="dot"></span>

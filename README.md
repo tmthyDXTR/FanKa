@@ -19,10 +19,19 @@ shared hosting, which has no .NET runtime).
 
 ## App features
 
-- **Learn mode**: flip the card, then grade it Easy / Hard / Wrong. Cards move between
-  Remaining, Hard, Easy and Done piles with adjustable per-deck timers, and progress is saved
-  per card for saved decks. Controls mirror the arrow keys and swipes (Left = Flip, Up = Easy,
-  Down = Hard, Right = Wrong). Space plays the pronunciation.
+- **Learn mode**: flip the card, then grade it Easy / Hard / Wrong. Scheduling lives in
+  `wwwroot/srs.js` and has two phases. Progress is saved per card for saved decks. Controls
+  mirror the arrow keys and swipes (Left = Flip, Up = Easy, Down = Hard, Right = Wrong).
+  Space plays the pronunciation.
+  - **Learning phase** (new or lapsed cards, minutes): Wrong retries after 1 min, Hard after
+    10 min (both adjustable per deck); Easy graduates the card straight to the review phase.
+  - **Review phase** (days): each Easy follows 1 → 3 → 7 → 16 → 35 days, then multiplies the
+    previous interval by 2.2. Hard keeps the card in review and multiplies its interval by 1.2.
+    Wrong is a lapse: the card returns to learning with a 10 min retry (adjustable) and, once
+    it graduates again, comes back at 35% of its previous interval (minimum 1 day).
+  - **Piles**: Remaining = new/learning, Hard = last answer was Hard, Easy = review cards with
+    an interval under 21 days, Done = mature review cards (21+ days). The dots on a card show
+    its step on the 1/3/7/16/35-day ladder.
 - **Options (⚙)**: card direction (汉字 → English or English → 汉字), auto-listen after flip,
   show/hide pinyin, dark/light theme, and card text size.
 - **Edit Cards**: browse the whole deck as small front/back tiles, search across hanzi,
@@ -120,7 +129,9 @@ The SQLite database is created at `node-host/data/flashcards.db` on first run
    - Application startup file: `server.js`
    - Node version: **22 or newer**
 3. In the app's **Environment Variables**, set `JWT_SECRET` (a long random
-   string) and `NODE_ENV=production`.
+   string) and `NODE_ENV=production`. On hosts with a process/thread limit (shared
+   hosting counts threads), also set `UV_THREADPOOL_SIZE=1` and
+   `NODE_OPTIONS=--v8-pool-size=1` to reduce Node's background threads.
 4. Click **Run NPM Install**. If better-sqlite3's build step is blocked, use
    the app's "Run JS Script"/terminal option to run the two approve/rebuild
    commands above.

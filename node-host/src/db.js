@@ -32,7 +32,8 @@ db.exec(`
     wrong_delay_minutes INTEGER NOT NULL DEFAULT 2,
     hard_delay_minutes INTEGER NOT NULL DEFAULT 2,
     easy_delay_minutes INTEGER NOT NULL DEFAULT 10,
-    done_delay_minutes INTEGER NOT NULL DEFAULT 1440
+    done_delay_minutes INTEGER NOT NULL DEFAULT 1440,
+    lapse_delay_minutes INTEGER NOT NULL DEFAULT 10
   );
 
   CREATE TABLE IF NOT EXISTS deck_cards (
@@ -43,13 +44,34 @@ db.exec(`
     english TEXT NOT NULL,
     bucket TEXT NOT NULL DEFAULT 'remaining',
     easy_streak INTEGER NOT NULL DEFAULT 0,
-    ready_at TEXT
+    ready_at TEXT,
+    phase TEXT NOT NULL DEFAULT 'learning',
+    review_step INTEGER NOT NULL DEFAULT 0,
+    interval_days REAL NOT NULL DEFAULT 0
   );
 `);
 
 const deckColumns = db.pragma('table_info(decks)');
 if (!deckColumns.some((column) => column.name === 'wrong_delay_minutes')) {
   db.exec('ALTER TABLE decks ADD COLUMN wrong_delay_minutes INTEGER NOT NULL DEFAULT 2');
+}
+
+if (!deckColumns.some((column) => column.name === 'lapse_delay_minutes')) {
+  db.exec('ALTER TABLE decks ADD COLUMN lapse_delay_minutes INTEGER NOT NULL DEFAULT 10');
+}
+
+const cardColumns = db.pragma('table_info(deck_cards)');
+if (!cardColumns.some((column) => column.name === 'phase')) {
+  db.transaction(() => {
+    db.exec(`
+      ALTER TABLE deck_cards ADD COLUMN phase TEXT NOT NULL DEFAULT 'learning';
+      ALTER TABLE deck_cards ADD COLUMN review_step INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE deck_cards ADD COLUMN interval_days REAL NOT NULL DEFAULT 0;
+      -- Cards that had already been marked Easy/Done under the old fixed-interval scheme enter
+      -- the review phase at the 1-day step, keeping their pending due time.
+      UPDATE deck_cards SET phase = 'review', interval_days = 1, bucket = 'easy' WHERE bucket IN ('easy', 'done');
+    `);
+  })();
 }
 
 module.exports = db;

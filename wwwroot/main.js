@@ -1,4 +1,7 @@
 import { dotnet } from './_framework/dotnet.js';
+import {
+  DEFAULT_SETTINGS, newCardMeta, metaFromServer, applyEasy, applyHard, applyWrong, formatInterval
+} from './srs.js';
 
 // Shrinks a group of text elements together (proportionally) until their shared
 // card face stops overflowing, down to a readable floor. Grouping matters because
@@ -106,22 +109,38 @@ const { getAssemblyExports } = await dotnet.create();
 const exports = await getAssemblyExports("flashcards-wasm.dll");
 
 // Per-card review state, index-aligned with the WASM deck (persisted server-side when a
-// saved deck is loaded, so it survives reload/logout/login). Cards cycle forever: even
-// "done" cards return to Remaining once their timer elapses.
+// saved deck is loaded, so it survives reload/logout/login). Scheduling rules live in srs.js:
+// a minutes-based learning phase followed by an exponentially growing review phase.
 function initCardMeta(count) {
-  return Array.from({ length: count }, () => ({ serverId: null, bucket: 'remaining', easyStreak: 0, readyAt: null }));
+  return Array.from({ length: count }, () => newCardMeta());
 }
 
 let cardMeta = initCardMeta(exports.DeckEngine.GetDeckCount());
 let currentCardIndex = null;
-const EASY_TO_DONE = 3;
 
 // Counts turns advanced via Wrong/Hard/Easy; used to force a fresh card into rotation
 // every 3rd turn so new vocabulary isn't crowded out by overdue Hard/Easy/Done reviews.
 let turnCounter = 0;
 
-// Adjustable per-deck delays (minutes) before a card returns to the Remaining pile
-let deckSettings = { wrongDelayMinutes: 2, hardDelayMinutes: 2, easyDelayMinutes: 10, doneDelayMinutes: 1440 };
+// Adjustable per-deck learning-phase delays (minutes)
+let deckSettings = { ...DEFAULT_SETTINGS };
+
+const DELAY_INPUT_IDS = {
+  wrongDelayMinutes: 'wrongDelayInput',
+  hardDelayMinutes: 'hardDelayInput',
+  lapseDelayMinutes: 'lapseDelayInput'
+};
+
+function resetDeckSettings() {
+  deckSettings = { ...DEFAULT_SETTINGS };
+  showDeckSettings();
+}
+
+function showDeckSettings() {
+  for (const [key, id] of Object.entries(DELAY_INPUT_IDS)) {
+    document.getElementById(id).value = deckSettings[key];
+  }
+}
 
 function isReady(meta) {
   return !meta.readyAt || meta.readyAt.getTime() <= Date.now();
@@ -153,17 +172,6 @@ function pickCurrentCardIndex(queue) {
   return queue[0];
 }
 
-function minutesFromNow(minutes) {
-  return new Date(Date.now() + minutes * 60000);
-}
-
-function formatCountdown(ms) {
-  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
-}
-
 // ---------------------------------------------------------------------------
 // 3. Card Rendering & Deck Control Functions
 // ---------------------------------------------------------------------------
@@ -189,8 +197,8 @@ const MAX_VISUAL_CARDS = 15;
 const frontProgressDots = document.getElementById('frontProgressDots');
 const backProgressDots = document.getElementById('backProgressDots');
 
-// Fills in dots for how many easy-marks the current card has (out of EASY_TO_DONE),
-// colored by whichever pile (hard/easy/remaining) the card currently belongs to.
+// Fills in dots for how far along the review ladder the current card is (one dot per ladder
+// step), colored by whichever pile (hard/easy/remaining) the card belongs to.
 function updateProgressDots(streak, bucket) {
   [frontProgressDots, backProgressDots].forEach((container) => {
     container.classList.remove('hard', 'easy');
@@ -260,7 +268,7 @@ function renderCurrentCard() {
     currentCardIndex = null;
     const nextReadyAtMs = Math.min(...cardMeta.map((m) => m.readyAt?.getTime() ?? Infinity));
     document.getElementById('frontHanzi').innerText =
-      `All caught up! Next review in ${formatCountdown(nextReadyAtMs - Date.now())}`;
+      `All caught up! Next review in ${formatInterval(nextReadyAtMs - Date.now())}`;
     document.getElementById('backPinyin').innerHTML = '';
     document.getElementById('backEnglish').innerText = '';
     btnAudio.style.display = 'none';
@@ -296,7 +304,10 @@ function renderCurrentCard() {
   btnAudio.style.display = modeToggle.checked ? 'none' : '';
   btnAudioBack.style.display = modeToggle.checked ? '' : 'none';
   const currentMeta = cardMeta[currentCardIndex];
-  updateProgressDots(currentMeta.easyStreak, currentMeta.bucket === 'remaining' ? null : currentMeta.bucket);
+  updateProgressDots(
+    currentMeta.phase === 'review' ? currentMeta.reviewStep + 1 : 0,
+    currentMeta.bucket === 'remaining' ? null : currentMeta.bucket
+  );
   autoFitCardText();
   updateEvalControlsVisibility();
 }
@@ -457,7 +468,7 @@ async function acceptGeneratedCard() {
     }
 
     exports.DeckEngine.AddCard(card.hanzi, card.pinyin, card.english);
-    cardMeta.push({ serverId, bucket: 'remaining', easyStreak: 0, readyAt: null });
+    cardMeta.push(newCardMeta(serverId));
     acceptedGeneratedCount += 1;
     generatedCardIndex += 1;
     acceptingGeneratedCard = false;
@@ -899,21 +910,22 @@ async function persistCardProgress(index) {
     method: 'PUT',
     body: JSON.stringify({
       bucket: meta.bucket,
-      easyStreak: meta.easyStreak,
+      phase: meta.phase,
+      reviewStep: meta.reviewStep,
+      intervalDays: meta.intervalDays,
       readyAt: meta.readyAt ? meta.readyAt.toISOString() : null
     })
   });
 }
 
-// Wrong: resets this card's easy streak and returns it to Remaining after its review delay
+// Wrong: a new/learning card retries after the short Wrong delay; a review card lapses back into
+// the learning phase (10-minute retry) and later re-graduates at a reduced interval
 document.getElementById('btnWrong').addEventListener('click', () => {
   if (currentCardIndex === null) return;
   nudgeCard('right');
   const index = currentCardIndex;
   const meta = cardMeta[index];
-  meta.bucket = 'remaining';
-  meta.easyStreak = 0;
-  meta.readyAt = minutesFromNow(deckSettings.wrongDelayMinutes);
+  applyWrong(meta, deckSettings);
 
   persistCardProgress(index);
   turnCounter += 1;
@@ -921,37 +933,28 @@ document.getElementById('btnWrong').addEventListener('click', () => {
   setTimeout(renderCurrentCard, 200);
 });
 
-// Hard: knocks one off this card's easy streak, moves it into the Hard pile for a short while
+// Hard: a learning card repeats after the Hard delay; a review card keeps its progress and only
+// grows its interval by a small factor
 document.getElementById('btnHard').addEventListener('click', () => {
   if (currentCardIndex === null) return;
   nudgeCard('down');
   const index = currentCardIndex;
   const meta = cardMeta[index];
-  meta.easyStreak = Math.max(0, meta.easyStreak - 1);
-  meta.bucket = 'hard';
-  meta.readyAt = minutesFromNow(deckSettings.hardDelayMinutes);
+  applyHard(meta, deckSettings);
   persistCardProgress(index);
   turnCounter += 1;
   scene.classList.remove('flipped');
   setTimeout(renderCurrentCard, 200);
 });
 
-// Easy: moves the card into the Easy pile; after EASY_TO_DONE marks it graduates to Done.
-// Both piles still return to Remaining later, Done just waits much longer.
+// Easy: a learning card graduates to the review phase (1 day); a review card moves up the
+// interval ladder (1, 3, 7, 16, 35 days, then x2.2 each time).
 document.getElementById('btnGood').addEventListener('click', () => {
   if (currentCardIndex === null) return;
   nudgeCard('up');
   const index = currentCardIndex;
   const meta = cardMeta[index];
-  meta.easyStreak += 1;
-
-  if (meta.easyStreak >= EASY_TO_DONE) {
-    meta.bucket = 'done';
-    meta.readyAt = minutesFromNow(deckSettings.doneDelayMinutes);
-  } else {
-    meta.bucket = 'easy';
-    meta.readyAt = minutesFromNow(deckSettings.easyDelayMinutes);
-  }
+  applyEasy(meta);
 
   persistCardProgress(index);
   turnCounter += 1;
@@ -1073,7 +1076,7 @@ document.getElementById('addCardForm').addEventListener('submit', async (e) => {
   }
 
   // Queue the new card at the back of the deck without interrupting the current one
-  cardMeta.push({ serverId, bucket: 'remaining', easyStreak: 0, readyAt: null });
+  cardMeta.push(newCardMeta(serverId));
   renderCurrentCard();
 });
 
@@ -1157,12 +1160,7 @@ async function loadDeckById(deckId) {
     exports.DeckEngine.AddCard(card.hanzi, card.pinyin, card.english);
   }
 
-  cardMeta = cards.map((c) => ({
-    serverId: c.id,
-    bucket: c.bucket,
-    easyStreak: c.easyStreak,
-    readyAt: c.readyAt ? new Date(c.readyAt) : null
-  }));
+  cardMeta = cards.map(metaFromServer);
   turnCounter = 0;
 
   currentDeckId = deckId;
@@ -1180,10 +1178,7 @@ async function loadDeckSettings(deckId) {
   if (!response.ok) return;
 
   deckSettings = await response.json();
-  document.getElementById('wrongDelayInput').value = deckSettings.wrongDelayMinutes;
-  document.getElementById('hardDelayInput').value = deckSettings.hardDelayMinutes;
-  document.getElementById('easyDelayInput').value = deckSettings.easyDelayMinutes;
-  document.getElementById('doneDelayInput').value = deckSettings.doneDelayMinutes;
+  showDeckSettings();
 }
 
 async function refreshAuthState() {
@@ -1289,16 +1284,13 @@ document.getElementById('btnCreateDeck').addEventListener('click', async () => {
   exports.DeckEngine.ClearDeck();
   cardMeta = [];
   turnCounter = 0;
-  deckSettings = { wrongDelayMinutes: 2, hardDelayMinutes: 2, easyDelayMinutes: 10, doneDelayMinutes: 1440 };
-  document.getElementById('wrongDelayInput').value = deckSettings.wrongDelayMinutes;
-  document.getElementById('hardDelayInput').value = deckSettings.hardDelayMinutes;
-  document.getElementById('easyDelayInput').value = deckSettings.easyDelayMinutes;
-  document.getElementById('doneDelayInput').value = deckSettings.doneDelayMinutes;
+  resetDeckSettings();
   scene.classList.remove('flipped');
   renderCurrentCard();
 
   newDeckName.value = '';
   await loadMyDecks();
+  myDecksSelect.value = String(deck.id);
 });
 
 document.getElementById('btnSaveTimers').addEventListener('click', async () => {
@@ -1308,14 +1300,14 @@ document.getElementById('btnSaveTimers').addEventListener('click', async () => {
     return;
   }
 
-  const wrongDelayMinutes = Math.max(0, parseInt(document.getElementById('wrongDelayInput').value, 10) || 0);
-  const hardDelayMinutes = Math.max(0, parseInt(document.getElementById('hardDelayInput').value, 10) || 0);
-  const easyDelayMinutes = Math.max(0, parseInt(document.getElementById('easyDelayInput').value, 10) || 0);
-  const doneDelayMinutes = Math.max(0, parseInt(document.getElementById('doneDelayInput').value, 10) || 0);
+  const readMinutes = (id) => Math.max(0, parseInt(document.getElementById(id).value, 10) || 0);
+  const wrongDelayMinutes = readMinutes('wrongDelayInput');
+  const hardDelayMinutes = readMinutes('hardDelayInput');
+  const lapseDelayMinutes = readMinutes('lapseDelayInput');
 
   const response = await apiCall(`/api/decks/${currentDeckId}/settings`, {
     method: 'PUT',
-    body: JSON.stringify({ wrongDelayMinutes, hardDelayMinutes, easyDelayMinutes, doneDelayMinutes })
+    body: JSON.stringify({ wrongDelayMinutes, hardDelayMinutes, lapseDelayMinutes })
   });
 
   if (!response.ok) {
@@ -1326,17 +1318,16 @@ document.getElementById('btnSaveTimers').addEventListener('click', async () => {
   deckSettings = await response.json();
 });
 
-document.getElementById('btnLoadDeck').addEventListener('click', async () => {
+// Selecting a deck loads it immediately
+myDecksSelect.addEventListener('change', async () => {
   showAuthError('');
   const deckId = myDecksSelect.value;
-  if (!deckId) {
-    showAuthError('No deck selected.');
-    return;
-  }
+  if (!deckId) return;
 
   const loaded = await loadDeckById(deckId);
   if (!loaded) {
     showAuthError('Could not load the deck.');
+    myDecksSelect.value = currentDeckId ? String(currentDeckId) : '';
   }
 });
 
@@ -1364,16 +1355,17 @@ document.getElementById('btnDeleteDeck').addEventListener('click', async () => {
     exports.DeckEngine.ClearDeck();
     cardMeta = [];
     turnCounter = 0;
-    deckSettings = { wrongDelayMinutes: 2, hardDelayMinutes: 2, easyDelayMinutes: 10, doneDelayMinutes: 1440 };
-    document.getElementById('wrongDelayInput').value = deckSettings.wrongDelayMinutes;
-    document.getElementById('hardDelayInput').value = deckSettings.hardDelayMinutes;
-    document.getElementById('easyDelayInput').value = deckSettings.easyDelayMinutes;
-    document.getElementById('doneDelayInput').value = deckSettings.doneDelayMinutes;
+    resetDeckSettings();
     scene.classList.remove('flipped');
     renderCurrentCard();
   }
 
   await loadMyDecks();
+
+  // The select always shows a deck, so make sure that deck is the one that's loaded
+  if (!currentDeckId && myDecksSelect.value) {
+    await loadDeckById(myDecksSelect.value);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -1467,7 +1459,7 @@ document.getElementById('btnImportCsv').addEventListener('click', async () => {
 
   cards.forEach((card, i) => {
     exports.DeckEngine.AddCard(card.hanzi, card.pinyin, card.english);
-    cardMeta.push({ serverId: serverIds[i], bucket: 'remaining', easyStreak: 0, readyAt: null });
+    cardMeta.push(newCardMeta(serverIds[i]));
   });
 
   importCsvText.value = '';

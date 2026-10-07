@@ -28,7 +28,9 @@ router.post('/', (req, res) => {
     return res.status(400).json({ error: 'Name is required.' });
   }
 
-  const info = db.prepare('INSERT INTO decks (name, owner_id) VALUES (?, ?)').run(name, req.user.sub);
+  const info = db
+    .prepare('INSERT INTO decks (name, owner_id, wrong_delay_minutes, hard_delay_minutes, lapse_delay_minutes) VALUES (?, ?, 1, 10, 10)')
+    .run(name, req.user.sub);
   res.status(201).json({ id: info.lastInsertRowid, name, cardCount: 0 });
 });
 
@@ -43,15 +45,14 @@ router.delete('/:id', (req, res) => {
 router.get('/:id/settings', (req, res) => {
   const deckId = Number(req.params.id);
   const deck = db
-    .prepare('SELECT wrong_delay_minutes, hard_delay_minutes, easy_delay_minutes, done_delay_minutes FROM decks WHERE id = ? AND owner_id = ?')
+    .prepare('SELECT wrong_delay_minutes, hard_delay_minutes, lapse_delay_minutes FROM decks WHERE id = ? AND owner_id = ?')
     .get(deckId, req.user.sub);
   if (!deck) return res.status(404).end();
 
   res.json({
     wrongDelayMinutes: deck.wrong_delay_minutes,
     hardDelayMinutes: deck.hard_delay_minutes,
-    easyDelayMinutes: deck.easy_delay_minutes,
-    doneDelayMinutes: deck.done_delay_minutes,
+    lapseDelayMinutes: deck.lapse_delay_minutes,
   });
 });
 
@@ -61,12 +62,11 @@ router.put('/:id/settings', (req, res) => {
 
   const wrong = Math.max(0, Number(req.body?.wrongDelayMinutes) || 0);
   const hard = Math.max(0, Number(req.body?.hardDelayMinutes) || 0);
-  const easy = Math.max(0, Number(req.body?.easyDelayMinutes) || 0);
-  const done = Math.max(0, Number(req.body?.doneDelayMinutes) || 0);
+  const lapse = Math.max(0, Number(req.body?.lapseDelayMinutes) || 0);
   db.prepare(
-    'UPDATE decks SET wrong_delay_minutes = ?, hard_delay_minutes = ?, easy_delay_minutes = ?, done_delay_minutes = ? WHERE id = ?'
-  ).run(wrong, hard, easy, done, deckId);
-  res.json({ wrongDelayMinutes: wrong, hardDelayMinutes: hard, easyDelayMinutes: easy, doneDelayMinutes: done });
+    'UPDATE decks SET wrong_delay_minutes = ?, hard_delay_minutes = ?, lapse_delay_minutes = ? WHERE id = ?'
+  ).run(wrong, hard, lapse, deckId);
+  res.json({ wrongDelayMinutes: wrong, hardDelayMinutes: hard, lapseDelayMinutes: lapse });
 });
 
 router.get('/:id/cards', (req, res) => {
@@ -75,7 +75,7 @@ router.get('/:id/cards', (req, res) => {
 
   const cards = db
     .prepare(
-      `SELECT id, hanzi, pinyin, english, bucket, easy_streak AS easyStreak, ready_at AS readyAt
+      `SELECT id, hanzi, pinyin, english, bucket, phase, review_step AS reviewStep, interval_days AS intervalDays, ready_at AS readyAt
        FROM deck_cards WHERE deck_id = ? ORDER BY id`
     )
     .all(deckId);
@@ -101,7 +101,9 @@ router.post('/:id/cards', (req, res) => {
     pinyin: pinyin.trim(),
     english: english.trim(),
     bucket: 'remaining',
-    easyStreak: 0,
+    phase: 'learning',
+    reviewStep: 0,
+    intervalDays: 0,
     readyAt: null,
   });
 });
@@ -127,7 +129,7 @@ router.post('/:id/cards/import', (req, res) => {
   const insertAll = db.transaction((cards) =>
     cards.map((c) => {
       const info = insert.run(deckId, c.hanzi, c.pinyin, c.english);
-      return { id: info.lastInsertRowid, hanzi: c.hanzi, pinyin: c.pinyin, english: c.english, bucket: 'remaining', easyStreak: 0, readyAt: null };
+      return { id: info.lastInsertRowid, hanzi: c.hanzi, pinyin: c.pinyin, english: c.english, bucket: 'remaining', phase: 'learning', reviewStep: 0, intervalDays: 0, readyAt: null };
     })
   );
 
@@ -142,10 +144,12 @@ router.put('/:deckId/cards/:cardId/progress', (req, res) => {
   const card = db.prepare('SELECT id FROM deck_cards WHERE id = ? AND deck_id = ?').get(cardId, deckId);
   if (!card) return res.status(404).end();
 
-  const { bucket, easyStreak, readyAt } = req.body || {};
-  db.prepare('UPDATE deck_cards SET bucket = ?, easy_streak = ?, ready_at = ? WHERE id = ?').run(
+  const { bucket, phase, reviewStep, intervalDays, readyAt } = req.body || {};
+  db.prepare('UPDATE deck_cards SET bucket = ?, phase = ?, review_step = ?, interval_days = ?, ready_at = ? WHERE id = ?').run(
     String(bucket ?? 'remaining'),
-    Number(easyStreak) || 0,
+    phase === 'review' ? 'review' : 'learning',
+    Math.max(0, Math.trunc(Number(reviewStep)) || 0),
+    Math.max(0, Number(intervalDays) || 0),
     readyAt ?? null,
     cardId
   );
