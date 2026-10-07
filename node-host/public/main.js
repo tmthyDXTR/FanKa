@@ -1,6 +1,7 @@
 import { dotnet } from './_framework/dotnet.js';
 import {
-  DEFAULT_SETTINGS, newCardMeta, metaFromServer, applyEasy, applyHard, applyWrong, formatInterval
+  DEFAULT_SETTINGS, REVIEW_LADDER_BUCKETS,
+  newCardMeta, metaFromServer, applyEasy, applyHard, applyWrong, formatInterval
 } from './srs.js';
 
 // Shrinks a group of text elements together (proportionally) until their shared
@@ -119,7 +120,7 @@ let cardMeta = initCardMeta(exports.DeckEngine.GetDeckCount());
 let currentCardIndex = null;
 
 // Counts turns advanced via Wrong/Hard/Easy; used to force a fresh card into rotation
-// every 3rd turn so new vocabulary isn't crowded out by overdue Hard/Easy/Done reviews.
+// every 3rd turn so new vocabulary isn't crowded out by overdue Hard/review-ladder reviews.
 let turnCounter = 0;
 
 // Adjustable per-deck learning-phase delays (minutes)
@@ -147,7 +148,7 @@ function isReady(meta) {
 }
 
 // Cards ready for review now. Expired-timer cards come first (most overdue first), then never-touched cards
-// last - otherwise a deck full of fresh cards would bury due Hard/Easy/Done cards forever.
+// last - otherwise a deck full of fresh cards would bury due Hard/review-ladder cards forever.
 function getActiveQueueIndices() {
   const normallyReady = cardMeta
     .map((_, i) => i)
@@ -162,7 +163,7 @@ function getActiveQueueIndices() {
 }
 
 // Picks the card to show next. Every 3rd turn, prefers an untouched/remaining card (if any)
-// over overdue Hard/Easy/Done reviews.
+// over overdue Hard/review-ladder reviews.
 function pickCurrentCardIndex(queue) {
   if (turnCounter % 3 === 2) {
     const freshIndex = queue.find((i) => cardMeta[i].bucket === 'remaining');
@@ -188,21 +189,32 @@ function buildRubyMarkup(hanzi) {
   }).join('');
 }
 
-const doneStackVisual = document.getElementById('doneStackVisual');
 const hardStackVisual = document.getElementById('hardStackVisual');
-const easyStackVisual = document.getElementById('easyStackVisual');
 const remainingStackVisual = document.getElementById('remainingStackVisual');
+const acceptedStackVisual = document.getElementById('acceptedStackVisual');
 const MAX_VISUAL_CARDS = 15;
+
+// One mini-stack per rung of the review ladder (1d/3d/7d/16d/35d+) so graduating cards stay
+// visible as concrete progress instead of disappearing into a single "Done" pile. Built from
+// REVIEW_LADDER_BUCKETS (srs.js) so the two files can't drift out of sync; the visual
+// mature-to-fresh ordering comes from the markup, not from this array.
+const LADDER_ID_SUFFIXES = ['1d', '3d', '7d', '16d', 'Mature'];
+const reviewLadderRungs = REVIEW_LADDER_BUCKETS.map((bucket, i) => ({
+  bucket,
+  stack: document.getElementById(`ladderStack${LADDER_ID_SUFFIXES[i]}`),
+  countEl: document.getElementById(`ladderCount${LADDER_ID_SUFFIXES[i]}`)
+}));
 
 const frontProgressDots = document.getElementById('frontProgressDots');
 const backProgressDots = document.getElementById('backProgressDots');
 
 // Fills in dots for how far along the review ladder the current card is (one dot per ladder
-// step), colored by whichever pile (hard/easy/remaining) the card belongs to.
+// step), colored by whichever pile (hard/review ladder) the card belongs to.
 function updateProgressDots(streak, bucket) {
+  const dotClass = bucket === 'hard' ? 'hard' : (bucket ? 'easy' : null);
   [frontProgressDots, backProgressDots].forEach((container) => {
     container.classList.remove('hard', 'easy');
-    if (bucket) container.classList.add(bucket);
+    if (dotClass) container.classList.add(dotClass);
 
     container.querySelectorAll('.dot').forEach((dot, i) => {
       dot.classList.toggle('filled', i < streak);
@@ -233,19 +245,19 @@ function renderStackVisual(container, count) {
 
 function renderCurrentCard() {
   // Pile counts reflect every card's current bucket, regardless of whether it's resting
-  const doneCount = cardMeta.filter((m) => m.bucket === 'done').length;
   const hardCount = cardMeta.filter((m) => m.bucket === 'hard').length;
-  const easyCount = cardMeta.filter((m) => m.bucket === 'easy').length;
   const remainingCount = cardMeta.filter((m) => m.bucket === 'remaining').length;
 
-  document.getElementById('doneCount').innerText = doneCount;
   document.getElementById('hardCount').innerText = hardCount;
-  document.getElementById('easyCount').innerText = easyCount;
   document.getElementById('remainingCount').innerText = remainingCount;
-  renderStackVisual(doneStackVisual, doneCount);
   renderStackVisual(hardStackVisual, hardCount);
-  renderStackVisual(easyStackVisual, easyCount);
   renderStackVisual(remainingStackVisual, remainingCount);
+
+  reviewLadderRungs.forEach(({ bucket, stack, countEl }) => {
+    const count = cardMeta.filter((m) => m.bucket === bucket).length;
+    countEl.innerText = count;
+    renderStackVisual(stack, count);
+  });
 
   if (cardMeta.length === 0) {
     scene.dataset.hanzi = '';
@@ -355,10 +367,10 @@ const btnReviewFlip = document.getElementById('btnReviewFlip');
 const reviewDirectionButtons = { left: btnReviewFlip, up: btnAcceptCard, right: btnDeclineCard };
 const reviewControls = document.getElementById('reviewControls');
 
-// Generated cards are reviewed inside the study view, which reuses the card scene and piles
+// Generated cards are reviewed inside the study view, which reuses the card scene. The
+// Accepted pile only exists in review mode; Hard is relabeled Declined and reused as-is.
 function enterReviewMode() {
   studyView.classList.add('reviewing');
-  document.getElementById('doneLabel').textContent = 'Accepted';
   document.getElementById('hardLabel').textContent = 'Declined';
   scene.classList.remove('flipped');
   openStudyView();
@@ -369,7 +381,6 @@ const btnResumeReview = document.getElementById('btnResumeReview');
 function leaveReviewMode() {
   generatorReviewActive = false;
   studyView.classList.remove('reviewing');
-  document.getElementById('doneLabel').textContent = 'Done';
   document.getElementById('hardLabel').textContent = 'Hard';
   scene.classList.remove('flipped');
   renderCurrentCard();
@@ -439,9 +450,9 @@ function showGeneratedCard() {
 }
 
 function renderGeneratedStacks() {
-  document.getElementById('doneCount').innerText = acceptedGeneratedCount;
+  document.getElementById('acceptedCount').innerText = acceptedGeneratedCount;
   document.getElementById('hardCount').innerText = declinedGeneratedCount;
-  renderStackVisual(doneStackVisual, acceptedGeneratedCount);
+  renderStackVisual(acceptedStackVisual, acceptedGeneratedCount);
   renderStackVisual(hardStackVisual, declinedGeneratedCount);
 }
 

@@ -289,6 +289,47 @@
       transform: translateX(-50%);
     }
 
+    /* Review ladder: one mini-stack per spaced-repetition interval a card has graduated to, so
+       progress toward mastery stays visible instead of vanishing into a single "Done" pile.
+       Ordered most-mature (left) to freshly-graduated (right), ending right before the card. */
+    .review-ladder {
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 0.9rem;
+      margin: 0 0 1.2rem;
+    }
+
+    .ladder-stat { text-align: center; opacity: 0.9; }
+    .ladder-stat .mini-stack { width: 34px; height: 30px; margin: 0 auto 0.3rem; }
+    .ladder-stat .mini-stack .mini-card { width: 22px; height: 16px; }
+    .ladder-stat .stat-value { font-size: 1.05rem; font-weight: 700; color: var(--accent); }
+    .ladder-stat .stat-label {
+      font-size: 0.62rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      opacity: 0.75;
+    }
+
+    .ladder-arrow { align-self: center; opacity: 0.3; font-size: 0.9rem; padding-bottom: 1rem; }
+
+    /* Rungs get progressively "warmer" the longer a card has stuck around, ending in gold for
+       cards proven over 35+ days - a small reward for visible, real progress */
+    .ladder-stat.rung-3d .stat-value { color: #38bdf8; }
+    .ladder-stat.rung-3d .mini-stack .mini-card.top { border-color: #38bdf8; }
+    .ladder-stat.rung-7d .stat-value { color: #34d399; }
+    .ladder-stat.rung-7d .mini-stack .mini-card.top { border-color: #34d399; }
+    .ladder-stat.rung-16d .stat-value { color: #22c55e; }
+    .ladder-stat.rung-16d .mini-stack .mini-card.top { border-color: #22c55e; }
+    .ladder-stat.rung-mature .stat-value { color: #eab308; }
+    .ladder-stat.rung-mature .mini-stack .mini-card.top { border-color: #eab308; }
+
+    @media (max-width: 480px) {
+      .review-ladder { gap: 0.6rem; }
+      .ladder-arrow { display: none; }
+    }
+
     /* Add Card Form */
     .card-form {
       margin-top: 3rem;
@@ -393,9 +434,12 @@
     .study-view.reviewing .review-controls { display: grid; }
     .study-view.reviewing .eval-controls,
     .study-view.reviewing .stat-learn-only,
+    .study-view.reviewing .review-ladder,
     .study-view.reviewing .card-progress-dots { display: none; }
-    .study-view.reviewing #doneCount { color: #22c55e; }
     .study-view.reviewing #hardCount { color: #ef4444; }
+    /* Accepted pile only makes sense while reviewing AI suggestions; Declined reuses Hard above */
+    .stat-review-only { display: none; }
+    .study-view.reviewing .stat-review-only { display: block; }
     .review-count { display: none; margin-bottom: 0.4rem; font-size: 0.8rem; opacity: 0.7; text-align: center; }
     .study-view.reviewing .review-count { display: block; }
 
@@ -924,18 +968,45 @@
   <div id="studyView" class="study-view" style="display: none;">
     <button class="action-btn btn-small" id="btnBackToOverview" type="button">← Back</button>
     <div class="review-count" id="reviewCount"></div>
-    <div class="deck-status">
-      <div class="stat">
-        <div class="mini-stack" id="doneStackVisual"></div>
-        <div class="stat-value" id="doneCount">0</div>
-        <div class="stat-label" id="doneLabel">Done</div>
-      </div>
 
-      <div class="stat stat-learn-only">
-        <div class="mini-stack" id="easyStackVisual"></div>
-        <div class="stat-value stat-value-easy" id="easyCount">0</div>
-        <div class="stat-label">Easy</div>
-      </div>      
+    <div class="review-ladder" id="reviewLadder" aria-label="Review ladder: cards graduate from 1 day up to 35+ days between reviews as you keep marking them Easy">
+      <div class="ladder-stat rung-mature">
+        <div class="mini-stack" id="ladderStackMature"></div>
+        <div class="stat-value" id="ladderCountMature">0</div>
+        <div class="stat-label">35d+ ⭐</div>
+      </div>
+      <span class="ladder-arrow" aria-hidden="true">→</span>
+      <div class="ladder-stat rung-16d">
+        <div class="mini-stack" id="ladderStack16d"></div>
+        <div class="stat-value" id="ladderCount16d">0</div>
+        <div class="stat-label">16d</div>
+      </div>
+      <span class="ladder-arrow" aria-hidden="true">→</span>
+      <div class="ladder-stat rung-7d">
+        <div class="mini-stack" id="ladderStack7d"></div>
+        <div class="stat-value" id="ladderCount7d">0</div>
+        <div class="stat-label">7d</div>
+      </div>
+      <span class="ladder-arrow" aria-hidden="true">→</span>
+      <div class="ladder-stat rung-3d">
+        <div class="mini-stack" id="ladderStack3d"></div>
+        <div class="stat-value" id="ladderCount3d">0</div>
+        <div class="stat-label">3d</div>
+      </div>
+      <span class="ladder-arrow" aria-hidden="true">→</span>
+      <div class="ladder-stat rung-1d">
+        <div class="mini-stack" id="ladderStack1d"></div>
+        <div class="stat-value" id="ladderCount1d">0</div>
+        <div class="stat-label">1d</div>
+      </div>
+    </div>
+
+    <div class="deck-status">
+      <div class="stat stat-review-only">
+        <div class="mini-stack" id="acceptedStackVisual"></div>
+        <div class="stat-value stat-value-easy" id="acceptedCount">0</div>
+        <div class="stat-label">Accepted</div>
+      </div>
 
       <div class="card-motion" id="cardMotion">
         <div class="scene" id="cardScene">

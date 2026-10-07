@@ -10,7 +10,11 @@ export const REVIEW_LADDER_DAYS = [1, 3, 7, 16, 35];
 export const EASY_MULTIPLIER = 2.2;
 export const HARD_MULTIPLIER = 1.2;
 export const LAPSE_INTERVAL_FACTOR = 0.35;
-export const MATURE_INTERVAL_DAYS = 21;
+
+// One pile per rung of the review ladder, so progress stays visible instead of disappearing
+// into a single "Done" bucket once a card matures. The last rung keeps collecting every card
+// that outgrows the fixed ladder (interval growing by EASY_MULTIPLIER forever).
+export const REVIEW_LADDER_BUCKETS = ['review-1d', 'review-3d', 'review-7d', 'review-16d', 'review-mature'];
 
 export const DEFAULT_SETTINGS = { wrongDelayMinutes: 1, hardDelayMinutes: 10, lapseDelayMinutes: 10 };
 
@@ -22,20 +26,25 @@ export function newCardMeta(serverId = null) {
 }
 
 export function metaFromServer(card) {
+  const phase = card.phase === 'review' ? 'review' : 'learning';
+  const reviewStep = Number(card.reviewStep) || 0;
   return {
     serverId: card.id,
-    bucket: card.bucket,
-    phase: card.phase === 'review' ? 'review' : 'learning',
-    reviewStep: Number(card.reviewStep) || 0,
+    // Re-derive the pile instead of trusting the stored string, so decks saved before the
+    // ladder piles existed (bucket 'easy'/'done') display correctly without a data migration.
+    bucket: card.bucket === 'hard' ? 'hard' : reviewBucket(phase, reviewStep),
+    phase,
+    reviewStep,
     intervalDays: Number(card.intervalDays) || 0,
     readyAt: card.readyAt ? new Date(card.readyAt) : null
   };
 }
 
 // Pile shown in the UI: Hard = last answer was Hard, Remaining = new/learning,
-// Easy = young review card, Done = mature review card.
-function reviewBucket(intervalDays) {
-  return intervalDays >= MATURE_INTERVAL_DAYS ? 'done' : 'easy';
+// review-1d..review-mature = which rung of the review ladder the card has reached.
+function reviewBucket(phase, reviewStep) {
+  if (phase !== 'review') return 'remaining';
+  return REVIEW_LADDER_BUCKETS[Math.min(reviewStep, REVIEW_LADDER_BUCKETS.length - 1)];
 }
 
 function ladderStepFor(intervalDays) {
@@ -55,7 +64,7 @@ function graduate(meta, now) {
   meta.phase = 'review';
   meta.intervalDays = days;
   meta.reviewStep = ladderStepFor(days);
-  meta.bucket = reviewBucket(days);
+  meta.bucket = reviewBucket(meta.phase, meta.reviewStep);
   meta.readyAt = new Date(now + days * MS_PER_DAY);
 }
 
@@ -72,7 +81,7 @@ export function applyEasy(meta, now = Date.now()) {
 
   meta.reviewStep = Math.min(nextStep, REVIEW_LADDER_DAYS.length - 1);
   meta.intervalDays = days;
-  meta.bucket = reviewBucket(days);
+  meta.bucket = reviewBucket(meta.phase, meta.reviewStep);
   meta.readyAt = new Date(now + days * MS_PER_DAY);
   return meta;
 }

@@ -29,9 +29,10 @@ shared hosting, which has no .NET runtime).
     previous interval by 2.2. Hard keeps the card in review and multiplies its interval by 1.2.
     Wrong is a lapse: the card returns to learning with a 10 min retry (adjustable) and, once
     it graduates again, comes back at 35% of its previous interval (minimum 1 day).
-  - **Piles**: Remaining = new/learning, Hard = last answer was Hard, Easy = review cards with
-    an interval under 21 days, Done = mature review cards (21+ days). The dots on a card show
-    its step on the 1/3/7/16/35-day ladder.
+  - **Piles**: Remaining = new/learning, Hard = last answer was Hard, and a 5-rung "review
+    ladder" (1d / 3d / 7d / 16d / 35d+) shows review cards by how far they've climbed the
+    interval ladder — so progress stays visible instead of disappearing into a single "Done"
+    pile once a card matures. The dots on a card show its current step on that same ladder.
 - **Options (⚙)**: card direction (汉字 → English or English → 汉字), auto-listen after flip,
   show/hide pinyin, dark/light theme, and card text size.
 - **Edit Cards**: browse the whole deck as small front/back tiles, search across hanzi,
