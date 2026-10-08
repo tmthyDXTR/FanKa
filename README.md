@@ -142,7 +142,23 @@ The SQLite database is created at `node-host/data/flashcards.db` on first run
 7. Back up `node-host/data/flashcards.db` periodically — it's the only
    persistent state (users, decks, cards).
 
-Whenever you change the WASM app, re-run `dotnet publish` + `npm run
-sync-wasm` locally, re-upload the `public` folder, and restart the Node.js
-app in cPanel. Server code changes (`server.js`, `src/**`) just need a
-re-upload + restart, no rebuild.
+### Updating the live app
+
+After the first-time setup above, use `deploy.sh` from the project root. It
+needs `rsync` locally and an `fastcomet` SSH host alias (edit `HOST` and
+`REMOTE_DIR` at the top of the script if yours differ).
+
+```bash
+./deploy.sh              # dotnet publish + sync-wasm + rsync + restart
+./deploy.sh --no-build   # deploy the current node-host/public without rebuilding
+./deploy.sh --dry-run    # show what would change, upload nothing
+```
+
+It uploads `public/`, `server.js`, `package.json`, `package-lock.json`, `src/`
+and `scripts/`, then touches `tmp/restart.txt` so Passenger restarts the app.
+It never touches `data/`, `node_modules`, `.env` or `.htaccess` on the server.
+Stale files in `public/` are deleted. Hard-refresh the browser
+(Ctrl+Shift+R) afterwards to bypass cached assets.
+
+If you change `package.json` dependencies, also run **Run NPM Install** in
+cPanel (or `npm install` in the server's Node virtualenv).
