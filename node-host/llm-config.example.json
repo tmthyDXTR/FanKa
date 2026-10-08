@@ -1,0 +1,10 @@
+{
+  "model": "openrouter/free",
+  "temperature": 0.7,
+  "maxTokensPerCard": 180,
+  "maxTokensCap": 4096,
+  "timeoutMs": 90000,
+  "systemPrompt": "Create useful Mandarin Chinese flashcards, using everyday language that a native speaker would use. Return only a JSON object with a \"cards\" array. Each card must have exactly these string fields: \"hanzi\" (a natural Chinese sentence or phrase) and \"english\" (natural English translation). Make every card relevant to the requested topic and distinct. Return the exact requested number.",
+  "userPrompt": "Create exactly {count} distinct Mandarin flashcards about: {topic}",
+  "extraParams": { "top_p": 0.95 }
+}

@@ -108,6 +108,31 @@ model. Generation is limited to 10 requests per IP per hour
 and requires a signed-in user. If these variables are unset, the UI reports
 that generation is not configured.
 
+### Tuning generation without a restart
+
+Model, temperature, token limits, timeout, both prompts and extra provider
+parameters can be changed live through `data/llm-config.json`
+(override the location with `LLM_CONFIG_PATH`). The file is re-read on every
+request, so saving it takes effect immediately; no restart or redeploy needed.
+Copy `llm-config.example.json` as a starting point. Every key is optional;
+missing or invalid values fall back to the defaults, and numbers are clamped
+to safe ranges (temperature 0–2, etc.). A broken JSON file is ignored with a
+warning in the log.
+
+| Key | Meaning |
+|---|---|
+| `model` | Overrides `LLM_MODEL` |
+| `temperature` | 0–2, default 0.7 |
+| `maxTokensPerCard` / `maxTokensCap` | `max_tokens = min(count × perCard, cap)` |
+| `timeoutMs` | Provider timeout, 5000–180000 |
+| `systemPrompt` | System message (must still ask for the `{"cards":[{hanzi,english}]}` JSON shape) |
+| `userPrompt` | User message template; `{count}` and `{topic}` are substituted |
+| `extraParams` | Extra request fields such as `top_p` (`model`, `messages`, `stream`, `temperature`, `max_tokens` are ignored) |
+
+The API base URL and key stay in the environment variables. On the server,
+`data/` is never overwritten by `deploy.sh`, so edit it there:
+`ssh fastcomet 'nano flash.supacoda.de/data/llm-config.json'`.
+
 ## Run locally
 
 ```bash

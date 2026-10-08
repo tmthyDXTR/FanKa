@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { requireAuth } = require('../auth/middleware');
@@ -13,6 +15,65 @@ const generateLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Generation limit reached. Try again later.' },
 });
+
+const DEFAULT_CONFIG = {
+  model: null,
+  temperature: 0.7,
+  maxTokensPerCard: 180,
+  maxTokensCap: 4096,
+  timeoutMs: 90_000,
+  systemPrompt: 'Create useful Mandarin Chinese flashcards, using everyday language that a native speaker would use. Return only a JSON object with a "cards" array. Each card must have exactly these string fields: "hanzi" (a natural Chinese sentence or phrase) and "english" (natural English translation). Make every card relevant to the requested topic and distinct. Return the exact requested number.',
+  userPrompt: 'Create exactly {count} distinct Mandarin flashcards about: {topic}',
+  extraParams: {},
+};
+
+// Params that must not be overridden through extraParams.
+const RESERVED_PARAMS = new Set(['model', 'messages', 'stream', 'temperature', 'max_tokens']);
+
+const CONFIG_PATH = process.env.LLM_CONFIG_PATH || path.join(__dirname, '..', '..', 'data', 'llm-config.json');
+
+function clampNumber(value, min, max, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+}
+
+function nonEmptyString(value, fallback) {
+  return typeof value === 'string' && value.trim() ? value : fallback;
+}
+
+function renderTemplate(template, vars) {
+  return template.replace(/\{(count|topic)\}/g, (_, key) => String(vars[key]));
+}
+
+// Read on every request so edits to the file apply without restarting the app.
+// Missing or invalid files fall back to the defaults; values are clamped to safe ranges.
+function loadGenerationConfig() {
+  let file = {};
+  try {
+    const parsed = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) file = parsed;
+  } catch (error) {
+    if (error.code !== 'ENOENT') console.warn(`Ignoring ${CONFIG_PATH}: ${error.message}`);
+  }
+
+  const extraParams = {};
+  if (file.extraParams && typeof file.extraParams === 'object' && !Array.isArray(file.extraParams)) {
+    for (const [key, value] of Object.entries(file.extraParams)) {
+      if (!RESERVED_PARAMS.has(key)) extraParams[key] = value;
+    }
+  }
+
+  return {
+    model: nonEmptyString(file.model, process.env.LLM_MODEL?.trim() || DEFAULT_CONFIG.model),
+    temperature: clampNumber(file.temperature, 0, 2, DEFAULT_CONFIG.temperature),
+    maxTokensPerCard: clampNumber(file.maxTokensPerCard, 20, 1000, DEFAULT_CONFIG.maxTokensPerCard),
+    maxTokensCap: clampNumber(file.maxTokensCap, 256, 8192, DEFAULT_CONFIG.maxTokensCap),
+    timeoutMs: clampNumber(file.timeoutMs, 5_000, 180_000, DEFAULT_CONFIG.timeoutMs),
+    systemPrompt: nonEmptyString(file.systemPrompt, DEFAULT_CONFIG.systemPrompt),
+    userPrompt: nonEmptyString(file.userPrompt, DEFAULT_CONFIG.userPrompt),
+    extraParams,
+  };
+}
 
 function getProviderUrl() {
   const baseUrl = process.env.LLM_API_BASE_URL?.trim();
@@ -74,7 +135,8 @@ router.post('/generate-cards', generateLimiter, async (req, res) => {
     return res.status(400).json({ error: 'Count must be a whole number between 1 and 20.' });
   }
 
-  const model = process.env.LLM_MODEL?.trim();
+  const cfg = loadGenerationConfig();
+  const model = cfg.model;
   let url;
   try {
     url = getProviderUrl();
@@ -94,19 +156,19 @@ router.post('/generate-cards', generateLimiter, async (req, res) => {
     const response = await fetch(url, {
       method: 'POST',
       headers,
-      signal: AbortSignal.timeout(90_000),
+      signal: AbortSignal.timeout(cfg.timeoutMs),
       body: JSON.stringify({
         model,
-        temperature: 0.7,
+        temperature: 0.6,
         max_tokens: Math.min(count * 180, 4096),
         messages: [
           {
             role: 'system',
-            content: 'Create useful Mandarin Chinese flashcards. Return only a JSON object with a "cards" array. Each card must have exactly these string fields: "hanzi" (a natural Chinese sentence or phrase) and "english" (natural English translation). Make every card relevant to the requested topic and distinct. Return the exact requested number.',
+            content: cfg.systemPrompt,
           },
           {
             role: 'user',
-            content: `Create exactly ${count} distinct Mandarin flashcards about: ${topic}`,
+            content: renderTemplate(cfg.userPrompt, { count, topic }),
           },
         ],
       }),
